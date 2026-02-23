@@ -304,6 +304,13 @@ async def chat(request: Request):
             system=system_prompt,
             messages=claude_messages,
         )
+    except anthropic.APIStatusError as e:
+        if e.status_code == 529:
+            return JSONResponse(
+                {"error": "The AI service is temporarily unavailable due to high demand. Please try again in a moment."},
+                status_code=503,
+            )
+        return JSONResponse({"error": f"Claude API error: {str(e)[:200]}"}, status_code=500)
     except Exception as e:
         return JSONResponse({"error": f"Claude API error: {str(e)[:200]}"}, status_code=500)
 
