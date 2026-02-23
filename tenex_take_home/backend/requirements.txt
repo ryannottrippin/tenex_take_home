@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+httpx
+itsdangerous
+anthropic
+python-docx
+pypdf
+python-pptx
+openpyxl
+chromadb
+google-generativeai

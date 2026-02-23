@@ -1,0 +1,29 @@
+# ===== SECRETS =====
+.env
+*.env
+.env.*
+
+# ===== PYTHON =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# ===== NODE =====
+node_modules/
+dist/
+.vite/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== EDITORS =====
+.idea/
+.vscode/
+*.swp
+
+# ===== VECTOR DB =====
+chroma_db/
