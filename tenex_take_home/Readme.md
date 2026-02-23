@@ -1,168 +1,156 @@
-# DriveChat
+# Google Drive AI Chat
 
-A web app that lets you have an AI-powered conversation about the files in any Google Drive folder. Sign in with Google, paste a folder link, and ask questions — the AI reads your documents and answers with citations linking back to the source files.
-
----
-
-## What It Does
-
-1. **Sign in with Google** — OAuth 2.0, read-only Drive access
-2. **Paste a Google Drive folder link** — any folder you have access to
-3. **Chat about the files** — AI reads all readable documents and answers questions
-4. **Citations** — responses include clickable links to the source files, plus the exact passage retrieved
+A web app that lets you sign in with Google, point it at a Drive folder, and have an AI-powered conversation about the files inside — with citations back to the source pages.
 
 ---
 
-## Stack
+## Prerequisites
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 18 + Vite (port 5173) |
-| Backend | FastAPI + Uvicorn (port 8000) |
-| Auth | Google OAuth 2.0 |
-| AI | Anthropic Claude (`claude-haiku-4-5-20251001`) |
-| Embeddings | Google `text-embedding-004` |
-| Vector DB | ChromaDB (local, persists to disk) |
+- **Python** (via [conda](https://docs.conda.io/en/latest/miniconda.html))
+- **Node.js** (v18+) and **npm**
+- A **Google Cloud** project with OAuth 2.0 credentials
+- An **Anthropic API key** (for Claude)
+- A **Google AI Studio API key** (for embeddings)
 
 ---
 
-## Architecture
+## 1. Google Cloud Setup
 
-### Retrieval: RAG over Google Drive
-
-When you submit a folder, the backend:
-1. Fetches all readable file contents from the Drive API in parallel
-2. Chunks each file into ~500-character segments with 50-char overlap
-3. Embeds each chunk using Google's `text-embedding-004` model
-4. Stores the embeddings in a local ChromaDB collection keyed by `(user, folder)`
-
-On each chat message:
-1. The query is embedded using the same model
-2. The top-5 most semantically similar chunks are retrieved
-3. Only those chunks are sent to Claude as context (not the full folder)
-4. Citations are derived from the retrieved chunk metadata — not guessed from the answer text
-
-This means the app handles large folders without hitting context limits, and citations are precise.
-
-### Fallback
-If the vector index isn't ready (e.g. Google API key not configured, server restarted before re-indexing), the app falls back to context stuffing — all file contents are sent to Claude directly. Citations fall back to name-matching.
-
-### Auth and Token Refresh
-Google OAuth tokens expire after 1 hour. The backend automatically refreshes them using the stored `refresh_token` before any Drive API call.
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project (or use an existing one).
+3. Enable these APIs:
+   - **Google Drive API**
+   - **Google People API** (for user profile info)
+4. Go to **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**.
+   - Application type: **Web application**
+   - Authorized redirect URI: `http://localhost:8000/auth/callback`
+5. Copy your **Client ID** and **Client Secret**.
 
 ---
 
-## File Structure
+## 2. Backend Setup
 
-```
-tenex_take_home/
-├── Readme.md
-├── .gitignore
-│
-├── backend/
-│   ├── main.py          # FastAPI app — auth, drive, and chat endpoints
-│   ├── parsers.py       # File content extraction for all supported MIME types
-│   ├── vectorstore.py   # ChromaDB + Google embeddings — indexing and search
-│   ├── requirements.txt
-│   ├── .env             # Secrets (not committed)
-│   └── chroma_db/       # Persisted vector index (not committed)
-│
-└── frontend/
-    ├── index.html
-    ├── package.json
-    ├── vite.config.js
-    └── src/
-        ├── main.jsx
-        ├── App.jsx           # Screen router (loading → auth → drive → chat)
-        ├── index.css         # All styles
-        └── components/
-            ├── AuthScreen.jsx    # Sign in with Google
-            ├── DriveInput.jsx    # Paste a folder link
-            └── ChatInterface.jsx # Chat UI with sidebar, messages, citations
+### Create and activate a conda environment
+
+```bash
+conda create -n drive-chat python=3.11
+conda activate drive-chat
 ```
 
----
+### Install dependencies
 
-## Supported File Types
+```bash
+cd backend
+pip install -r requirements.txt
+```
 
-| Type | How it's read |
-|---|---|
-| Google Docs | Exported as plain text via Drive API |
-| Google Sheets | Exported as CSV via Drive API |
-| Google Slides | Exported as plain text via Drive API |
-| `.docx` | Parsed with `python-docx` |
-| `.pptx` | Parsed with `python-pptx` (text frames + tables) |
-| `.xlsx` | Parsed with `openpyxl` (`data_only=True`) |
-| `.pdf` | Parsed with `pypdf` |
-| `.txt`, `.md`, `.csv`, `.json` | Downloaded directly |
-| Images, binaries | Skipped |
+### Create the `.env` file
 
----
-
-## Setup
-
-### Prerequisites
-- Python (conda recommended)
-- Node.js + npm
-- A Google Cloud project with OAuth credentials
-- An Anthropic API key
-- A Google AI Studio API key (free)
-
-### 1. Google Cloud — OAuth Credentials
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
-2. Create an OAuth 2.0 Client ID (Web application)
-3. Add `http://localhost:8000/auth/callback` as an Authorized Redirect URI
-4. Enable the **Google Drive API** for your project
-5. Copy the Client ID and Client Secret
-
-### 2. Google AI Studio — Embedding API Key
-
-1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. Create an API key
-3. This is used for `text-embedding-004` (chunking and vector search)
-
-### 3. Anthropic API Key
-
-Get your key from [console.anthropic.com](https://console.anthropic.com).
-
-### 4. Backend `.env`
-
-Create `backend/.env`:
+Create a file at `backend/.env` with the following contents:
 
 ```env
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback
-SESSION_SECRET=any-random-string
-ANTHROPIC_API_KEY=your-anthropic-key
-GOOGLE_API_KEY=your-google-ai-studio-key
+SESSION_SECRET=any-random-string-you-choose
+ANTHROPIC_API_KEY=your-anthropic-api-key
+GOOGLE_API_KEY=your-google-ai-studio-api-key
 ```
 
-### 5. Install and Run
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — from step 1 above
+- `SESSION_SECRET` — any long random string (used to sign session cookies)
+- `ANTHROPIC_API_KEY` — from [console.anthropic.com](https://console.anthropic.com/)
+- `GOOGLE_API_KEY` — from [aistudio.google.com](https://aistudio.google.com/) (used for text embeddings)
 
-**Backend:**
+### Start the backend
+
 ```bash
-conda activate your-env
 cd backend
-pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-**Frontend:**
+The backend runs on **http://localhost:8000**.
+
+---
+
+## 3. Frontend Setup
+
+In a separate terminal:
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Then open [http://localhost:5173](http://localhost:5173).
+The frontend runs on **http://localhost:5173**.
 
 ---
 
-## Known Limitations
+## 4. Using the App
 
-- Images are not readable (no OCR)
-- File content is capped at 10,000 characters per file before chunking
-- The vector index persists to disk but is rebuilt when you re-submit a folder
-- In-memory file cache is lost on server restart (vector index is not)
+1. Open **http://localhost:5173** in your browser.
+2. Click **Continue with Google** and sign in.
+3. Copy a Google Drive folder URL (e.g. `https://drive.google.com/drive/folders/abc123`) and paste it in.
+4. The app will index the files in the folder — this may take a few seconds.
+5. Start chatting. Responses include citations that link back to the source files, with page or slide numbers where applicable.
+
+> **Note:** The first time you log in after setting up the backend, make sure to complete the full OAuth flow so the app can capture your refresh token. If your session ever stops working, log out and back in.
+
+---
+
+## Project Structure
+
+```
+├── backend/
+│   ├── main.py           # FastAPI app — all API endpoints
+│   ├── parsers.py        # File content extraction (PDF, PPTX, DOCX, etc.)
+│   ├── vectorstore.py    # ChromaDB indexing and semantic search
+│   ├── requirements.txt
+│   └── .env              # Secrets — you create this (not committed)
+└── frontend/
+    ├── src/
+    │   ├── App.jsx           # Screen router
+    │   ├── main.jsx          # React entry point
+    │   ├── index.css         # All styles
+    │   └── components/
+    │       ├── AuthScreen.jsx
+    │       ├── DriveInput.jsx
+    │       └── ChatInterface.jsx
+    ├── package.json
+    └── vite.config.js
+```
+
+---
+
+## Supported File Types
+
+| Type | Extension |
+|------|-----------|
+| PDF | `.pdf` — page-level citations |
+| PowerPoint | `.pptx` — slide-level citations |
+| Word | `.docx` |
+| Excel | `.xlsx` |
+| Plain text / Markdown | `.txt`, `.md` |
+| Google Docs / Sheets / Slides | exported automatically via Drive API |
+
+> Images are not supported (no OCR). File content is capped at 10,000 characters per file.
+
+---
+
+## Troubleshooting
+
+**"Sign in with Google" redirects to an error**
+- Check that your OAuth redirect URI is exactly `http://localhost:8000/auth/callback` in Google Cloud Console.
+- Make sure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env` are correct.
+
+**No files appear in the sidebar**
+- Confirm the Drive folder is accessible to the account you signed in with.
+- Shared Drive folders are supported — make sure you're using the full folder URL.
+
+**Chat responses have no citations or seem unaware of file content**
+- The vector index builds in the background after you submit a folder. Wait a few seconds and try again.
+- Check the backend terminal for any indexing errors.
+
+**Token expired / can't access Drive after a while**
+- Log out (top-right menu) and sign back in. The app will capture a fresh refresh token and handle renewals automatically going forward.
