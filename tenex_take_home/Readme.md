@@ -99,26 +99,90 @@ The frontend runs on **http://localhost:5173**.
 
 ---
 
+## Running the Tests
+
+The test suite covers all API routes, request schemas, and service helpers. All external calls (Google APIs, Anthropic, ChromaDB) are mocked — no network connection or real credentials required.
+
+### Install pytest
+
+```bash
+conda activate drive-chat
+pip install pytest
+```
+
+### Run
+
+```bash
+# From the project root (same folder as pytest.ini)
+pytest
+```
+
+To see individual test names as they run:
+
+```bash
+pytest -v
+```
+
+### What is tested
+
+| File | Covers |
+|------|--------|
+| `tests/test_health.py` | `GET /health` |
+| `tests/test_auth.py` | `/auth/me`, `/auth/google`, `/auth/callback`, `/auth/logout` |
+| `tests/test_drive.py` | `GET /drive/files` — auth guard, validation, Drive API errors, happy path |
+| `tests/test_chat.py` | `POST /chat` — RAG path, fallback cache, Claude 529 → 503 |
+| `tests/test_exceptions.py` | `AppException` error format contract |
+| `tests/test_schemas.py` | `ChatRequest` + `HistoryMessage` Pydantic validation |
+| `tests/test_services.py` | `extract_folder_id()` URL parsing |
+
+---
+
 ## Project Structure
 
 ```
 ├── backend/
-│   ├── main.py           # FastAPI app — all API endpoints
-│   ├── parsers.py        # File content extraction (PDF, PPTX, DOCX, etc.)
-│   ├── vectorstore.py    # ChromaDB indexing and semantic search
+│   ├── main.py              # FastAPI app factory — middleware + router registration
+│   ├── core/
+│   │   ├── config.py        # pydantic-settings — typed config from .env
+│   │   ├── exceptions.py    # AppException + global error handler
+│   │   └── dependencies.py  # get_current_user auth guard
+│   ├── routers/
+│   │   ├── auth.py          # /auth/* routes
+│   │   ├── drive.py         # /drive/* routes
+│   │   └── chat.py          # /chat route
+│   ├── schemas/
+│   │   └── chat.py          # ChatRequest + HistoryMessage Pydantic models
+│   ├── services/
+│   │   └── drive.py         # Shared cache + Drive API helpers
+│   ├── parsers.py           # File content extraction (PDF, PPTX, DOCX, etc.)
+│   ├── vectorstore.py       # ChromaDB indexing and semantic search
 │   ├── requirements.txt
-│   └── .env              # Secrets — you create this (not committed)
-└── frontend/
-    ├── src/
-    │   ├── App.jsx           # Screen router
-    │   ├── main.jsx          # React entry point
-    │   ├── index.css         # All styles
-    │   └── components/
-    │       ├── AuthScreen.jsx
-    │       ├── DriveInput.jsx
-    │       └── ChatInterface.jsx
-    ├── package.json
-    └── vite.config.js
+│   └── .env                 # Secrets — you create this (not committed)
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx           # Screen router
+│   │   ├── main.jsx          # React entry point
+│   │   ├── index.css         # All styles
+│   │   ├── api/
+│   │   │   ├── client.js     # Base fetch wrapper
+│   │   │   ├── auth.js       # getMe(), LOGIN_URL
+│   │   │   ├── drive.js      # getFiles()
+│   │   │   └── chat.js       # sendMessage()
+│   │   └── components/
+│   │       ├── AuthScreen.jsx
+│   │       ├── DriveInput.jsx
+│   │       └── ChatInterface.jsx
+│   ├── package.json
+│   └── vite.config.js
+└── tests/
+    ├── conftest.py           # Shared fixtures
+    ├── test_health.py
+    ├── test_auth.py
+    ├── test_drive.py
+    ├── test_chat.py
+    ├── test_exceptions.py
+    ├── test_schemas.py
+    └── test_services.py
 ```
 
 ---

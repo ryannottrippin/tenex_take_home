@@ -1,3 +1,5 @@
+import { LOGIN_URL } from '../api/auth'
+
 function GoogleIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
@@ -42,7 +44,7 @@ export default function AuthScreen() {
         <div className="auth-card">
           <h2>Get started</h2>
           <p className="auth-subtitle">Sign in with your Google account to connect your Drive</p>
-          <button className="google-btn" onClick={() => window.location.href = 'http://localhost:8000/auth/google'}>
+          <button className="google-btn" onClick={() => window.location.href = LOGIN_URL}>
             <GoogleIcon />
             Continue with Google
           </button>

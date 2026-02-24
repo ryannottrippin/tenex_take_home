@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import { getFiles } from '../api/drive'
+import { sendMessage } from '../api/chat'
 
 function fileIcon(mimeType) {
   if (mimeType === 'application/vnd.google-apps.document') return '📄'
@@ -24,19 +26,12 @@ export default function ChatInterface({ user, folderLink }) {
 
   // Load files on mount
   useEffect(() => {
-    fetch(`http://localhost:8000/drive/files?folder_link=${encodeURIComponent(folderLink)}`, {
-      credentials: 'include',
-    })
-      .then(res => res.json())
+    getFiles(folderLink)
       .then(data => {
-        if (data.error) {
-          setFilesError(data.error)
-        } else {
-          setFolderName(data.folder_name || 'Folder')
-          setFiles(data.files || [])
-        }
+        setFolderName(data.folder_name || 'Folder')
+        setFiles(data.files || [])
       })
-      .catch(() => setFilesError('Could not connect to server'))
+      .catch(err => setFilesError(err.message || 'Could not connect to server'))
   }, [folderLink])
 
   // Scroll to bottom when messages change
@@ -52,24 +47,14 @@ export default function ChatInterface({ user, folderLink }) {
     setSending(true)
 
     try {
-      const res = await fetch('http://localhost:8000/chat', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder_link: folderLink, message: text, history: messages }),
-      })
-      const data = await res.json()
-      if (data.error) {
-        setMessages(prev => [...prev, { role: 'assistant', text: `Error: ${data.error}` }])
-      } else {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          text: data.answer,
-          citations: data.citations || [],
-        }])
-      }
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', text: 'Something went wrong. Please try again.' }])
+      const data = await sendMessage(folderLink, text, messages)
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        text: data.answer,
+        citations: data.citations || [],
+      }])
+    } catch (err) {
+      setMessages(prev => [...prev, { role: 'assistant', text: err.message || 'Something went wrong. Please try again.' }])
     } finally {
       setSending(false)
     }

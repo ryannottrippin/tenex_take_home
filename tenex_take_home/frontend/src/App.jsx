@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import AuthScreen from './components/AuthScreen'
 import DriveInput from './components/DriveInput'
 import ChatInterface from './components/ChatInterface'
+import { getMe } from './api/auth'
 
 function App() {
   const [screen, setScreen] = useState('loading')
@@ -9,8 +10,7 @@ function App() {
   const [folderLink, setFolderLink] = useState('')
 
   useEffect(() => {
-    fetch('http://localhost:8000/auth/me', { credentials: 'include' })
-      .then(res => res.json())
+    getMe()
       .then(data => {
         if (data.user) {
           setUser(data.user)

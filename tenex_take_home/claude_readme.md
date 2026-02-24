@@ -10,6 +10,8 @@
 ## Project Status
 **Fully working end-to-end.** All three screens complete, auth + Drive + chat + RAG all confirmed working.
 Page-aware citations (page numbers for PDFs, slide numbers for .pptx) are implemented and working.
+Best practices refactor complete: modular backend (routers/services/schemas/core), pydantic-settings config, dependency injection auth guard, centralized error handling, frontend API layer, /health endpoint.
+Pytest test suite complete: 7 test modules covering all routes, schemas, services, and error handling — all external calls mocked, no network required.
 
 ## Project Goal
 A web interface where users:
@@ -33,6 +35,7 @@ A web interface where users:
 ### File Structure
 ```
 frontend/
+├── .env              # VITE_API_URL=http://localhost:8000
 ├── index.html
 ├── package.json
 ├── vite.config.js
@@ -40,14 +43,25 @@ frontend/
     ├── main.jsx          # Entry point, mounts React, imports CSS
     ├── App.jsx           # Screen router using useState + useEffect
     ├── index.css         # All styles (single file, CSS variables)
+    ├── api/
+    │   ├── client.js     # Base fetch wrapper — credentials + error normalization
+    │   ├── auth.js       # getMe(), LOGIN_URL
+    │   ├── drive.js      # getFiles(folderLink)
+    │   └── chat.js       # sendMessage(folderLink, message, history)
     └── components/
         ├── AuthScreen.jsx    # Screen 1: COMPLETE — sign in with Google
         ├── DriveInput.jsx    # Screen 2: COMPLETE — paste Drive folder link
         └── ChatInterface.jsx # Screen 3: COMPLETE — sidebar + messages + input
 ```
 
+### API Layer (src/api/)
+All fetch calls go through `apiFetch` in `client.js`. It:
+- Reads base URL from `VITE_API_URL` env var (no hardcoded localhost)
+- Attaches `credentials: 'include'` automatically
+- Throws `Error(data.error)` if the response contains an error — components just catch the error
+
 ### Screen Routing (App.jsx)
-- Starts in `'loading'` state, calls `GET /auth/me` on mount
+- Starts in `'loading'` state, calls `getMe()` on mount
 - If user session exists → goes to `'drive'` screen
 - If no session → goes to `'auth'` screen
 - States: `'loading'` | `'auth'` | `'drive'` | `'chat'`
@@ -56,7 +70,7 @@ frontend/
 - `folderLink` state passed from DriveInput → ChatInterface
 
 ### AuthScreen.jsx — COMPLETE
-- "Continue with Google" button does `window.location.href = 'http://localhost:8000/auth/google'`
+- "Continue with Google" button sets `window.location.href = LOGIN_URL` (from `api/auth.js`)
 - Full-page redirect to backend, which kicks off the OAuth flow
 
 ### DriveInput.jsx — COMPLETE
@@ -67,14 +81,14 @@ frontend/
 
 ### ChatInterface.jsx — COMPLETE
 - Receives `user` and `folderLink` props from App.jsx
-- On mount: calls `GET /drive/files?folder_link=...`, populates sidebar with file list and folder name
+- On mount: calls `getFiles(folderLink)`, populates sidebar with file list and folder name
 - Sidebar: brand header, folder name, file list with icons, user email at bottom
 - Main area: message thread (user right / assistant left), "Thinking..." indicator while waiting
 - Citations render as clickable `<a>` pill badges opening `https://drive.google.com/file/d/{id}/view` in a new tab
 - Citation pills show page/slide label when available: e.g. `filename.pdf (p. 3)` or `deck.pptx (Slide 7)`
 - If RAG is active, a "View source passages" `<details>` expander shows the exact retrieved chunk under each response, with file name and page label header
 - Input bar: textarea, Enter to send (Shift+Enter for newline), auto-scrolls to latest message
-- Calls `POST /chat` on send, passes full conversation history
+- Calls `sendMessage(folderLink, text, messages)` on send, passes full conversation history
 
 ---
 
@@ -83,12 +97,25 @@ frontend/
 ### File Structure
 ```
 backend/
-├── main.py          # FastAPI app — auth + drive + chat endpoints
-├── parsers.py       # File content extraction (all MIME types + fetch_all_contents)
-├── vectorstore.py   # ChromaDB + Google embedding — index_files, search
-├── requirements.txt # Python dependencies
-├── .env             # Secrets (not committed)
-├── chroma_db/       # Persisted vector index (not committed)
+├── main.py              # App factory — middleware, router registration, /health
+├── core/
+│   ├── config.py        # pydantic-settings — typed config loaded from .env
+│   ├── exceptions.py    # AppException + global exception handler
+│   └── dependencies.py  # get_current_user — FastAPI dependency injection
+├── routers/
+│   ├── auth.py          # /auth/* routes
+│   ├── drive.py         # /drive/* routes
+│   └── chat.py          # /chat route
+├── schemas/
+│   └── chat.py          # ChatRequest + HistoryMessage Pydantic models
+├── services/
+│   └── drive.py         # Shared state + helpers: _folder_cache, FolderCache,
+│                        #   extract_folder_id, get_access_token, list_drive_files
+├── parsers.py           # File content extraction (all MIME types + fetch_all_contents)
+├── vectorstore.py       # ChromaDB + Google embedding — index_files, search
+├── requirements.txt     # Python dependencies
+├── .env                 # Secrets (not committed)
+├── chroma_db/           # Persisted vector index (not committed)
 └── .gitignore
 ```
 
@@ -100,16 +127,29 @@ uvicorn main:app --reload --port 8000
 ```
 
 ### Environment Variables (.env)
+Loaded via `pydantic-settings` in `core/config.py`. All fields are type-validated at startup.
 - `GOOGLE_CLIENT_ID` — from Google Cloud Console
 - `GOOGLE_CLIENT_SECRET` — from Google Cloud Console
 - `GOOGLE_REDIRECT_URI` — `http://localhost:8000/auth/callback`
 - `SESSION_SECRET` — random string, signs session cookies
 - `ANTHROPIC_API_KEY` — Claude API key
 - `GOOGLE_API_KEY` — from Google AI Studio, used for `text-embedding-004`
+- `DEBUG` — optional, defaults to `False`; set to `True` to enable `/docs` and `/openapi.json`
 
 ### Middleware
 1. **CORSMiddleware** — allows React (port 5173) to call backend (port 8000)
 2. **SessionMiddleware** — stores user + access_token in a signed cookie
+
+### Error Handling
+- `AppException(status_code, detail)` — custom exception defined in `core/exceptions.py`
+- Registered globally via `app.add_exception_handler` — returns `{"error": detail}` JSON
+- All routes raise `AppException` instead of returning `JSONResponse({"error": ...})` inline
+- Claude 529 (overloaded) raises `AppException(503, "...temporarily unavailable...")`
+
+### Auth Guard (Dependency Injection)
+- `get_current_user(request)` in `core/dependencies.py` — reads session, raises `AppException(401)` if not logged in
+- Used as `user: dict = Depends(get_current_user)` in `/drive/files` and `/chat`
+- `/auth/me` does NOT use the dependency — it returns `{"user": null}` gracefully so the frontend can detect login state
 
 ### Auth Endpoints
 
@@ -123,7 +163,7 @@ uvicorn main:app --reload --port 8000
 - Redirects to http://localhost:5173
 
 **GET /auth/me**
-- Returns session user or 401
+- Returns `{"user": {...}}` or `{"user": null}` with 401
 - Called by App.jsx on load to check login state
 
 **GET /auth/logout**
@@ -143,18 +183,24 @@ uvicorn main:app --reload --port 8000
 ### Chat Endpoint
 
 **POST /chat**
-- Body: `{ folder_link, message, history: [{role, text}] }`
+- Body validated by `ChatRequest` Pydantic model: `{ folder_link, message, history: [{role, text}] }`
 - **Primary path (RAG):** calls `search(email, folder_id, message, top_k=5)` — embeds the query, retrieves top-K relevant chunks from ChromaDB, builds context from those chunks with file name + page label header
 - **Fallback path (context stuffing):** used when vector index is empty; reads from `_folder_cache` or re-fetches from Drive; also attempts `index_files` in background
 - Sends context + history to Claude (`claude-haiku-4-5-20251001`) via Anthropic SDK
 - **RAG citations:** `{name, id, passage, page_label}` — deduplicated by file, passage is the actual retrieved chunk, page_label is `"p. N"` / `"Slide N"` / null
 - **Fallback citations:** `{name, id}` — name-match based (file name appears in answer text)
 
+### Health Endpoint
+
+**GET /health**
+- Returns `{"status": "healthy"}`
+- Used to verify the backend is running
+
 ### Token Refresh
 
 Access tokens expire after 1 hour. The backend handles this automatically:
 - `auth_callback` saves `refresh_token` and `token_expiry` (unix timestamp) into the session
-- `get_access_token(request, client)` — async helper called before any Drive API request:
+- `get_access_token(request, client)` in `services/drive.py` — async helper called before any Drive API request:
   - If token is more than 60 seconds from expiry → return it as-is
   - If expired → POST to `https://oauth2.googleapis.com/token` with the refresh token
   - Updates `access_token` and `token_expiry` in the session, returns the fresh token
@@ -164,7 +210,7 @@ Access tokens expire after 1 hour. The backend handles this automatically:
 
 ### In-Memory Cache
 
-File contents are cached after the first `/drive/files` call so the fallback path in `/chat` never re-downloads files.
+Defined in `services/drive.py`. Shared between `routers/drive.py` and `routers/chat.py` via module-level dict (Python module singleton — both routers mutate the same object).
 
 - `_folder_cache: dict[tuple[str, str], FolderCache]` — keyed by `(email, folder_id)`
 - `FolderCache` — dataclass holding `files: list[dict]` and `fetched_at: float`
@@ -208,8 +254,64 @@ Implemented in `vectorstore.py`. Used as the primary retrieval path in `/chat`.
 - No cross-user isolation beyond `(email, folder_id)` key
 - Google Slides (.pptx export via Drive API) exported as plain text — no per-slide section labels (only native .pptx uploads get slide labels)
 
+---
+
+## Tests
+
+### File Structure
+```
+tests/                       # project root (alongside backend/ and frontend/)
+├── conftest.py              # shared fixtures + session cookie builder
+├── requirements-test.txt    # just pytest (rest already in backend/requirements.txt)
+├── test_health.py           # GET /health
+├── test_auth.py             # /auth/me, /auth/google, /auth/callback, /auth/logout
+├── test_drive.py            # GET /drive/files
+├── test_chat.py             # POST /chat — RAG path, fallback, 529 handling
+├── test_exceptions.py       # AppException class + global handler contract
+├── test_schemas.py          # ChatRequest + HistoryMessage Pydantic models
+└── test_services.py         # extract_folder_id() unit tests
+pytest.ini                   # pythonpath=backend, testpaths=tests
+```
+
+### Running the tests
+```bash
+conda activate <your-env>
+cd tenex_take_home   # project root where pytest.ini lives
+pip install pytest
+pytest
+```
+
+### Fixture strategy (conftest.py)
+Three client fixtures cover all auth scenarios:
+- `client` — unauthenticated, no session cookie
+- `auth_client` — uses `app.dependency_overrides[get_current_user]` for routes protected by `Depends(get_current_user)` (`/drive/files`, `/chat`)
+- `session_client` — injects a real signed Starlette session cookie (built with `itsdangerous.TimestampSigner`) for routes that read `request.session` directly (`/auth/me`, `/auth/logout`)
+
+`clear_folder_cache` — `autouse=True` fixture that wipes `_folder_cache` before and after every test to prevent state leakage between tests.
+
+### What is mocked
+All external calls are mocked with `unittest.mock` — tests run offline:
+- `httpx.AsyncClient` — Google Drive API + OAuth token exchange
+- `anthropic.Anthropic` — Claude completions
+- `search()` — ChromaDB vector query (runs via `asyncio.to_thread`)
+- `index_files()` — ChromaDB indexing (runs via `asyncio.to_thread`)
+- `fetch_all_contents()` — parallel file parsing
+
+### Test coverage by module
+| File | What it tests |
+|---|---|
+| `test_health.py` | 200 response + correct body |
+| `test_auth.py` | OAuth redirect URL, scopes, callback session, logout cookie clearing |
+| `test_drive.py` | 401 guard, 422 missing param, 400 bad link, Drive API error, happy path, indexing failure tolerance |
+| `test_chat.py` | 401 guard, 422/400 validation, RAG citations, deduplication, history forwarding, cache fallback, Claude 529 → 503 |
+| `test_exceptions.py` | `{"error": ...}` key contract (not `{"detail": ...}`), status code preservation |
+| `test_schemas.py` | Required fields, defaults, nested `HistoryMessage` validation |
+| `test_services.py` | `extract_folder_id` — standard URLs, query params, trailing paths, non-folder URLs |
+
+---
+
 ### Dependencies (requirements.txt)
-- `fastapi`, `uvicorn[standard]`, `python-dotenv`, `httpx`, `itsdangerous` — core
+- `fastapi`, `uvicorn[standard]`, `python-dotenv`, `pydantic-settings`, `httpx`, `itsdangerous` — core
 - `anthropic` — Claude SDK
 - `python-docx` — `.docx` parsing
 - `pypdf` — PDF parsing
